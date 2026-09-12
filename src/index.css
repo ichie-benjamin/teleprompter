@@ -70,7 +70,9 @@ body {
 .btn:hover { background: #24242c; }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.btn.icon { padding: 9px 10px; display: grid; place-items: center; }
+.btn.icon { padding: 9px 12px; display: flex; align-items: center; gap: 6px; }
+.btn.icon .label { display: none; }
+@media (min-width: 480px) { .btn.icon .label { display: inline; } }
 
 .seg {
   display: flex;
