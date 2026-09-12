@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 import type { ParsedScript } from '../lib/script'
 
-export type Mode = 'voice' | 'scroll'
+export type Mode = 'follow' | 'auto' | 'voice'
 
 /** Fraction of the viewport height where the reading line sits. */
-const MARKER = 0.4
+export const MARKER = 0.4
 
 interface Props {
   script: ParsedScript
   mode: Mode
   playing: boolean
   current: number
-  /** px per second in scroll mode */
+  /** px per second for the timed modes */
   speed: number
+  /** voice mode: whether the reader is talking right now */
+  movingRef: RefObject<boolean>
   fontSize: number
   mirror: boolean
   /** explicit jump request (scene tap etc.); `id` changes on every request */
@@ -23,7 +25,7 @@ interface Props {
 }
 
 export function Prompter({
-  script, mode, playing, current, speed, fontSize, mirror, jump,
+  script, mode, playing, current, speed, movingRef, fontSize, mirror, jump,
   onToggle, onCurrentChange, onReachedEnd,
 }: Props) {
   const box = useRef<HTMLDivElement>(null)
@@ -49,14 +51,6 @@ export function Prompter({
     return () => ro.disconnect()
   }, [invalidateTops])
 
-  const scrollToWord = useCallback((index: number, smooth = true) => {
-    const el = box.current
-    const w = wordEls.current[index]
-    if (!el || !w) return
-    const top = w.offsetTop + w.offsetHeight / 2 - el.clientHeight * MARKER
-    el.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' })
-  }, [])
-
   const targetTop = useCallback((index: number) => {
     const el = box.current
     const w = wordEls.current[index]
@@ -64,12 +58,35 @@ export function Prompter({
     return Math.max(0, w.offsetTop + w.offsetHeight / 2 - el.clientHeight * MARKER)
   }, [])
 
-  // Voice mode: the highlight leads and the scroll glides after it. One easing loop
+  const scrollToWord = useCallback((index: number, smooth = true) => {
+    const top = targetTop(index)
+    if (top !== null) box.current?.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' })
+  }, [targetTop])
+
+  // Which word sits on the reading line right now (first word of that line).
+  const wordAtMarker = useCallback(() => {
+    const el = box.current
+    const ts = getTops()
+    if (!el || !ts.length) return -1
+    const y = el.scrollTop + el.clientHeight * MARKER
+    let lo = 0, hi = ts.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (ts[mid] <= y) lo = mid
+      else hi = mid - 1
+    }
+    const lineTop = ts[lo]
+    while (lo > 0 && ts[lo - 1] === lineTop) lo--
+    return lo
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Follow mode: the highlight leads and the scroll glides after it. One easing loop
   // instead of a native smooth-scroll per recognition event — those restart on every
   // interim result and stutter, especially on phones.
   const userScrollUntil = useRef(0)
   useEffect(() => {
-    if (mode !== 'voice' || !playing) return
+    if (mode !== 'follow' || !playing) return
     const el = box.current
     if (!el) return
     let raf = 0
@@ -83,78 +100,32 @@ export function Prompter({
       if (target === null) return
       const diff = target - el.scrollTop
       if (Math.abs(diff) < 0.5) return
-      // exponential ease, ~150 ms time constant; long jumps still arrive quickly
       el.scrollTop += diff * Math.min(1, dt * 7)
     }
     raf = requestAnimationFrame(step)
-    const onUser = () => { userScrollUntil.current = performance.now() + 1200 }
-    el.addEventListener('touchstart', onUser, { passive: true })
-    el.addEventListener('wheel', onUser, { passive: true })
-    return () => {
-      cancelAnimationFrame(raf)
-      el.removeEventListener('touchstart', onUser)
-      el.removeEventListener('wheel', onUser)
-    }
+    return () => cancelAnimationFrame(raf)
   }, [mode, playing, targetTop])
 
-  // Paused voice mode still follows the highlight (e.g. after a mic-driven move
-  // just before pausing). The first positioning (mount / new script) is instant
-  // and deferred a frame so layout has settled.
-  const settled = useRef(false)
+  // Timed modes: the scroll runs on its own clock; the highlight follows the reading line.
+  // In voice mode the velocity eases to zero while nobody is talking.
   useEffect(() => {
-    if (settled.current) {
-      if (mode === 'voice' && !playing) scrollToWord(current)
-      return
-    }
-    if (mode === 'scroll' && playing) return
-    const raf = requestAnimationFrame(() => {
-      scrollToWord(current, false)
-      settled.current = true
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [current, mode, playing, scrollToWord])
-  useEffect(() => { settled.current = false }, [script])
-
-  // Explicit jumps work in both modes.
-  useEffect(() => {
-    if (!jump) return
-    onCurrentChange(jump.index)
-    scrollToWord(jump.index)
-  }, [jump, scrollToWord, onCurrentChange])
-
-  // Scroll mode: time drives the scroll, the highlight follows the marker line.
-  useEffect(() => {
-    if (mode !== 'scroll' || !playing) return
+    if (mode === 'follow' || !playing) return
     const el = box.current
     if (!el) return
     let raf = 0
     let last = performance.now()
     let pos = el.scrollTop
+    let velocity = 0
     let lastPick = 0
-
-    const pickWord = () => {
-      const ts = getTops()
-      if (!ts.length) return
-      const y = el.scrollTop + el.clientHeight * MARKER
-      // last word whose top is above the marker
-      let lo = 0, hi = ts.length - 1
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1
-        if (ts[mid] <= y) lo = mid
-        else hi = mid - 1
-      }
-      // snap to the first word of that line
-      const lineTop = ts[lo]
-      while (lo > 0 && ts[lo - 1] === lineTop) lo--
-      if (lo !== currentRef.current) onCurrentChange(lo)
-    }
 
     const step = (now: number) => {
       const dt = Math.min(0.1, (now - last) / 1000)
       last = now
-      // if the reader dragged the page, follow them
+      const target = mode === 'auto' || movingRef.current ? speedRef.current : 0
+      velocity += (target - velocity) * Math.min(1, dt * (target ? 4 : 8))
+      // if the reader dragged the page, continue from there
       if (Math.abs(el.scrollTop - pos) > 2) pos = el.scrollTop
-      pos += speedRef.current * dt
+      pos += velocity * dt
       const max = el.scrollHeight - el.clientHeight
       if (pos >= max) {
         el.scrollTop = max
@@ -164,17 +135,67 @@ export function Prompter({
       el.scrollTop = pos
       if (now - lastPick > 100) {
         lastPick = now
-        pickWord()
+        const w = wordAtMarker()
+        if (w >= 0 && w !== currentRef.current) onCurrentChange(w)
       }
       raf = requestAnimationFrame(step)
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, playing, onCurrentChange, onReachedEnd])
+  }, [mode, playing, movingRef, onCurrentChange, onReachedEnd, wordAtMarker])
+
+  // Manual scrolling: pause following for a moment, and in the timed modes keep the
+  // highlight on whatever the reader dragged onto the line.
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const onUser = () => { userScrollUntil.current = performance.now() + 1200 }
+    let t = 0
+    const onScroll = () => {
+      if (mode === 'follow' && playing) return
+      window.clearTimeout(t)
+      t = window.setTimeout(() => {
+        const w = wordAtMarker()
+        if (w >= 0 && w !== currentRef.current) onCurrentChange(w)
+      }, 80)
+    }
+    el.addEventListener('touchstart', onUser, { passive: true })
+    el.addEventListener('wheel', onUser, { passive: true })
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.clearTimeout(t)
+      el.removeEventListener('touchstart', onUser)
+      el.removeEventListener('wheel', onUser)
+      el.removeEventListener('scroll', onScroll)
+    }
+  }, [mode, playing, wordAtMarker, onCurrentChange])
+
+  // First positioning (mount / new script) is instant and deferred a frame so layout
+  // has settled. After that, follow mode also re-centres when paused.
+  const settled = useRef(false)
+  useEffect(() => {
+    if (settled.current) {
+      if (mode === 'follow' && !playing) scrollToWord(current)
+      return
+    }
+    if (mode !== 'follow' && playing) return
+    const raf = requestAnimationFrame(() => {
+      scrollToWord(current, false)
+      settled.current = true
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [current, mode, playing, scrollToWord])
+  useEffect(() => { settled.current = false }, [script])
+
+  // Explicit jumps work in every mode.
+  useEffect(() => {
+    if (!jump) return
+    onCurrentChange(jump.index)
+    scrollToWord(jump.index)
+  }, [jump, scrollToWord, onCurrentChange])
 
   const currentLine = script.words[current]?.line ?? -1
-  const highlightWord = mode === 'voice'
+  const highlightWord = mode === 'follow'
 
   return (
     <div
@@ -185,7 +206,7 @@ export function Prompter({
       role="button"
       aria-label={playing ? 'Pause' : 'Play'}
     >
-      <div className="marker" aria-hidden />
+      <div className="gate" aria-hidden />
       <div className="text">
         {script.lines.map((line) => (
           <p
@@ -201,7 +222,7 @@ export function Prompter({
                 ref={(el) => { wordEls.current[w.index] = el }}
                 className={
                   highlightWord && w.index === current ? 'w cur'
-                  : w.index < current ? 'w past' : 'w'
+                  : highlightWord && w.index < current ? 'w past' : 'w'
                 }
               >
                 {w.text}{' '}
@@ -210,7 +231,10 @@ export function Prompter({
           </p>
         ))}
         {script.lines.length === 0 && (
-          <p className="empty">No script yet. Tap “Script” to paste or load one.</p>
+          <div className="empty">
+            <span className="empty-kicker">No script loaded</span>
+            <span>Tap <b>Script</b> to paste your text or open a .txt / .md file.</span>
+          </div>
         )}
       </div>
     </div>

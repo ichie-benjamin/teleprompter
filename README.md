@@ -15,8 +15,9 @@ Voice mode needs a browser with the Web Speech API (Chrome, Edge, Safari 14.5+, 
 
 ## Features
 
-- **Voice follow** — `SpeechRecognition` streams what you say; the last few recognised words are aligned to the script (local alignment with fuzzy word matching), the highlight moves to that spot and the page scrolls to keep it on the reading line. Stop talking and nothing moves.
-- **Scroll mode** — plain timed scroll with a speed slider, for when you'd rather not use the mic. The paragraph on the reading line is highlighted.
+- **Follow** — `SpeechRecognition` streams what you say; the last few recognised words are aligned to the script (local alignment with fuzzy word matching), the highlight moves to that spot and the page glides to keep it on the reading line. Stop talking and nothing moves.
+- **Auto** — plain timed scroll with a speed slider, for when you'd rather not use the mic. The paragraph on the reading line is highlighted.
+- **Voice** — timed scroll that only moves while you are talking. Uses microphone level detection (Web Audio, adaptive noise floor) rather than speech recognition, so it is instant, language-agnostic and works offline. Sensitivity is adjustable in Settings.
 - **Play / pause** — tap anywhere on the text, the big button, or `Space`. `Esc` pauses, `Home` returns to the top.
 - **Script in** — paste text or load a `.txt` / `.md`. Markers like `[S7]` (also `[Scene 7]`) become scene jump points. Markdown headings / emphasis are stripped for reading. The script and settings persist in `localStorage`.
 - **Settings** — text size, mirror (for beam-splitter glass).
@@ -28,7 +29,8 @@ Voice mode needs a browser with the Web Speech API (Chrome, Edge, Safari 14.5+, 
 src/
   lib/script.ts                 parse text → lines / words / scenes
   lib/match.ts                  align spoken words to the script
-  hooks/useSpeechRecognition.ts Web Speech API wrapper with auto-restart
+  hooks/useSpeechRecognition.ts Web Speech API wrapper with auto-restart (Follow mode)
+  hooks/useVoiceActivity.ts     mic level / talking detection (Voice mode)
   hooks/useWakeLock.ts
   hooks/useLocalStorage.ts
   components/Prompter.tsx       reading view, highlight, scrolling (both modes)
