@@ -268,6 +268,25 @@ body {
 .settings input[type='checkbox'] { width: 18px; height: 18px; accent-color: var(--accent); }
 .settings .hint { margin: 0; }
 
+.transcript {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(76px + var(--safe-b));
+  z-index: 4;
+  max-width: min(90vw, 640px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(20, 20, 25, 0.85);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  min-height: 27px;
+}
+
 .toast {
   position: fixed;
   left: 12px; right: 12px;

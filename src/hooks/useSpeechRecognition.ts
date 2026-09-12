@@ -53,6 +53,8 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
   const [error, setError] = useState<string | null>(null)
   /** true for a moment after each recognition result — drives the "hearing you" indicator */
   const [hearing, setHearing] = useState(false)
+  /** last few recognised words, for the on-screen transcript */
+  const [transcript, setTranscript] = useState('')
   const session = useRef<(() => void) | null>(null)
   const onWordsRef = useRef(onWords)
   const onErrorRef = useRef(onError)
@@ -65,6 +67,7 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
     session.current?.()
     session.current = null
     setHearing(false)
+    setTranscript('')
     setStatus('idle')
   }, [])
 
@@ -78,6 +81,8 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
     let hearingTimer: number | undefined
     let finals: string[] = []
     let lastFinalIndex = -1
+    let gotResult = false
+    let networkErrors = 0
 
     const rec = new Ctor()
     rec.continuous = true
@@ -106,6 +111,8 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
       setError(null)
     }
     rec.onresult = (e) => {
+      gotResult = true
+      networkErrors = 0
       const interim: string[] = []
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i]
@@ -123,15 +130,26 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
       setHearing(true)
       window.clearTimeout(hearingTimer)
       hearingTimer = window.setTimeout(() => setHearing(false), 1500)
-      onWordsRef.current([...finals, ...interim])
+      const stream = [...finals, ...interim]
+      setTranscript(stream.slice(-8).join(' '))
+      onWordsRef.current(stream)
     }
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         fail('Microphone access was blocked. Allow the mic for this site, or use Scroll mode.')
       } else if (e.error === 'audio-capture') {
         fail('No microphone was found.')
+      } else if (e.error === 'network') {
+        // Chrome-based browsers without Google's speech service (Brave, some Chromium builds)
+        // fail this way every time; a one-off blip is retried.
+        networkErrors++
+        if (!gotResult && networkErrors >= 2) {
+          fail('Speech recognition could not reach its service. Use Chrome, Edge or Safari — Brave and Firefox do not support it.')
+        }
+      } else if (e.error === 'language-not-supported') {
+        fail(`Speech recognition does not support the language "${rec.lang}".`)
       }
-      // 'no-speech', 'aborted', 'network' → onend fires and we restart
+      // 'no-speech', 'aborted' → onend fires and we restart
     }
     rec.onend = () => {
       if (stopped) return
@@ -154,5 +172,5 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
   useEffect(() => stop, [stop])
 
   const status: SpeechStatus = speechSupported ? liveStatus : 'unsupported'
-  return { start, stop, status, error, hearing }
+  return { start, stop, status, error, hearing, transcript }
 }

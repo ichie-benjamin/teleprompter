@@ -44,7 +44,12 @@ export default function App() {
     (spoken: string[]) => {
       const recent = spoken.slice(-SPOKEN_WINDOW)
       const anchor = posOf[current] ?? 0
-      const pos = locate(recent, norms, anchor)
+      let pos = locate(recent, norms, anchor)
+      // Nothing near the current spot: if we have a solid phrase, search the whole script
+      // (covers starting mid-script or after a manual scroll).
+      if (pos < 0 && recent.length >= 5) {
+        pos = locate(recent, norms, anchor, { behind: norms.length, ahead: norms.length, minScore: 3.8 })
+      }
       if (pos >= 0) {
         const idx = matchIndex[pos]
         if (idx !== current) setCurrent(idx)
@@ -177,6 +182,11 @@ export default function App() {
       </footer>
 
       {speech.error && mode === 'voice' && <div className="toast">{speech.error}</div>}
+      {mode === 'voice' && playing && (
+        <div className="transcript" aria-live="polite">
+          {speech.transcript || (speech.status === 'listening' ? 'Start reading…' : '')}
+        </div>
+      )}
 
       {panel === 'editor' && (
         <Editor value={text} onChange={updateText} onDone={() => setPanel('none')} />
