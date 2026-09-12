@@ -20,6 +20,7 @@ export default function App() {
   const [current, setCurrent] = useState(0)
   const [jump, setJump] = useState<{ index: number; id: number } | null>(null)
   const [panel, setPanel] = useState<'none' | 'editor' | 'scenes' | 'settings'>('none')
+  const [lastKey, setLastKey] = useState<string | null>(null)
 
   const script = useMemo(() => parseScript(text), [text])
 
@@ -78,14 +79,34 @@ export default function App() {
   const switchMode = useCallback((m: Mode) => { pause(); setMode(m) }, [pause, setMode])
   const jumpTo = useCallback((index: number) => setJump({ index, id: Date.now() }), [])
 
-  // Keyboard: space = play/pause, Esc = pause / close panel, ↑/↓ = previous/next scene.
+  // Keys that toggle play/pause. Besides Space this covers Bluetooth shutter remotes
+  // (AB Shutter etc.), which are HID keyboards: the "Android" button sends Enter, the
+  // "iOS" button Volume Up (only reaches the page on Android — iOS swallows it), and
+  // some clones send a media Play/Pause key.
+  const TOGGLE_KEYS = useMemo(() => new Set([
+    ' ', 'Enter', 'MediaPlayPause', 'AudioVolumeUp', 'AudioVolumeDown', 'VolumeUp', 'VolumeDown',
+  ]), [])
+
+  const prevScene = useCallback(() => {
+    const before = script.scenes.filter((sc) => sc.wordIndex < current)
+    jumpTo(before.length ? before[before.length - 1].wordIndex : 0)
+  }, [script.scenes, current, jumpTo])
+  const nextScene = useCallback(() => {
+    const after = script.scenes.find((sc) => sc.wordIndex > current)
+    if (after) jumpTo(after.wordIndex)
+  }, [script.scenes, current, jumpTo])
+
+  // Keyboard / remote: toggle keys above, Esc = pause / close panel, Home = top,
+  // PageUp/PageDown or ↑/↓ = previous / next scene (presenter clickers send PageUp/Down).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT') return
-      if (e.code === 'Space' || e.key === ' ') {
+      if (e.repeat) return
+      setLastKey(e.key === ' ' ? 'Space' : e.key)
+      if (TOGGLE_KEYS.has(e.key) || e.code === 'Space') {
         e.preventDefault()
-        // a focused button would also fire on keyup — drop focus so space only toggles once
+        // a focused button would also fire on keyup — drop focus so the key only toggles once
         if (t instanceof HTMLElement && t.tagName === 'BUTTON') t.blur()
         if (panel === 'none') toggle()
       } else if (e.key === 'Escape') {
@@ -93,11 +114,17 @@ export default function App() {
         else pause()
       } else if (e.key === 'Home') {
         jumpTo(0)
+      } else if (e.key === 'PageDown' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        nextScene()
+      } else if (e.key === 'PageUp' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        prevScene()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [panel, toggle, pause, jumpTo])
+  }, [panel, toggle, pause, jumpTo, nextScene, prevScene, TOGGLE_KEYS])
 
   const currentScene = useMemo(() => {
     let s = null
@@ -228,7 +255,10 @@ export default function App() {
               <button className="btn" onClick={() => { jumpTo(0); setPanel('none') }}>Back to top</button>
             </div>
             <p className="hint">
-              Space — play / pause · Esc — pause · Home — back to top.<br />
+              Space / Enter — play / pause · Esc — pause · Home — top · PgUp / PgDn — scenes.<br />
+              Bluetooth shutter remotes work as play / pause (on iPhone use the remote's
+              “Android” button — iOS keeps the volume key to itself).<br />
+              Last key received: <code>{lastKey ?? 'none yet'}</code><br />
               Everything runs on this device; nothing is uploaded.
             </p>
           </div>
