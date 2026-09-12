@@ -57,14 +57,53 @@ export function Prompter({
     el.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' })
   }, [])
 
-  // Voice mode (and any paused state): the highlight leads, the scroll follows.
-  // The first positioning (mount / new script) is instant and deferred a frame
-  // so layout has settled.
+  const targetTop = useCallback((index: number) => {
+    const el = box.current
+    const w = wordEls.current[index]
+    if (!el || !w) return null
+    return Math.max(0, w.offsetTop + w.offsetHeight / 2 - el.clientHeight * MARKER)
+  }, [])
+
+  // Voice mode: the highlight leads and the scroll glides after it. One easing loop
+  // instead of a native smooth-scroll per recognition event — those restart on every
+  // interim result and stutter, especially on phones.
+  const userScrollUntil = useRef(0)
+  useEffect(() => {
+    if (mode !== 'voice' || !playing) return
+    const el = box.current
+    if (!el) return
+    let raf = 0
+    let last = performance.now()
+    const step = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000)
+      last = now
+      raf = requestAnimationFrame(step)
+      if (now < userScrollUntil.current) return
+      const target = targetTop(currentRef.current)
+      if (target === null) return
+      const diff = target - el.scrollTop
+      if (Math.abs(diff) < 0.5) return
+      // exponential ease, ~150 ms time constant; long jumps still arrive quickly
+      el.scrollTop += diff * Math.min(1, dt * 7)
+    }
+    raf = requestAnimationFrame(step)
+    const onUser = () => { userScrollUntil.current = performance.now() + 1200 }
+    el.addEventListener('touchstart', onUser, { passive: true })
+    el.addEventListener('wheel', onUser, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      el.removeEventListener('touchstart', onUser)
+      el.removeEventListener('wheel', onUser)
+    }
+  }, [mode, playing, targetTop])
+
+  // Paused voice mode still follows the highlight (e.g. after a mic-driven move
+  // just before pausing). The first positioning (mount / new script) is instant
+  // and deferred a frame so layout has settled.
   const settled = useRef(false)
   useEffect(() => {
     if (settled.current) {
-      // scroll mode moves on its own clock (and via explicit jumps) — only voice follows here
-      if (mode === 'voice') scrollToWord(current)
+      if (mode === 'voice' && !playing) scrollToWord(current)
       return
     }
     if (mode === 'scroll' && playing) return

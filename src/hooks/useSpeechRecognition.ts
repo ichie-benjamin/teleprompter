@@ -151,12 +151,22 @@ export function useSpeechRecognition({ lang, onWords, onError }: Options) {
       }
       // 'no-speech', 'aborted' → onend fires and we restart
     }
+    const restart = (delay: number) => {
+      restartTimer = window.setTimeout(() => {
+        if (stopped) return
+        try {
+          rec.start()
+        } catch {
+          // still winding down — try again shortly
+          restart(150)
+        }
+      }, delay)
+    }
     rec.onend = () => {
       if (stopped) return
-      // Browsers end the session after a pause; keep it alive until stop() is called.
-      restartTimer = window.setTimeout(() => {
-        try { rec.start() } catch { /* already started */ }
-      }, 200)
+      // Browsers end the session after a pause (phones do it after every utterance);
+      // restart at once so the gap is as short as possible.
+      restart(0)
     }
 
     session.current = dispose

@@ -52,7 +52,10 @@ export default function App() {
       }
       if (pos >= 0) {
         const idx = matchIndex[pos]
-        if (idx !== current) setCurrent(idx)
+        // Interim results get revised as the recogniser settles; ignore tiny backward
+        // steps so the highlight doesn't flicker. Real re-reads further back still work.
+        if (idx === current || (idx < current && current - idx <= 3)) return
+        setCurrent(idx)
       }
     },
     [current, norms, matchIndex, posOf],
